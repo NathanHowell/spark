@@ -229,23 +229,27 @@ private[sql] object JsonInferSchema {
   private def compatibleRootType(
       columnNameOfCorruptRecords: String,
       shouldHandleCorruptRecord: Boolean): (DataType, DataType) => DataType = {
+    // The normal case is merging two structs (json objects)
+    case (ty1: StructType, ty2: StructType) => compatibleType(ty1, ty2)
     // Since we support array of json objects at the top level,
     // we need to check the element type and find the root level data type.
     case (ArrayType(ty1, _), ty2) =>
       compatibleRootType(columnNameOfCorruptRecords, shouldHandleCorruptRecord)(ty1, ty2)
     case (ty1, ArrayType(ty2, _)) =>
       compatibleRootType(columnNameOfCorruptRecords, shouldHandleCorruptRecord)(ty1, ty2)
-    // If we see any other data type at the root level, we get records that cannot be
-    // parsed. So, we use the struct as the data type and add the corrupt field to the schema.
+    // Discard null/empty documents
     case (struct: StructType, NullType) => struct
     case (NullType, struct: StructType) => struct
-    case (struct: StructType, o) if !o.isInstanceOf[StructType] && shouldHandleCorruptRecord =>
+    // If we see any other data type at the root level, we get records that cannot be
+    // parsed. So, we use the struct as the data type and add the corrupt field to the schema.
+    case (struct: StructType, _) if shouldHandleCorruptRecord =>
       withCorruptField(struct, columnNameOfCorruptRecords)
-    case (o, struct: StructType) if !o.isInstanceOf[StructType] && shouldHandleCorruptRecord =>
+    case (_, struct: StructType) if shouldHandleCorruptRecord =>
       withCorruptField(struct, columnNameOfCorruptRecords)
-    // If we get anything else, we call compatibleType.
-    // Usually, when we reach here, ty1 and ty2 are two StructTypes.
-    case (ty1, ty2) => compatibleType(ty1, ty2)
+    // If corrupt record handling is disabled we retain the valid schema and discard the other
+    case (struct: StructType, _) => struct
+    case (_, struct: StructType) => struct
+    case _ => NullType
   }
 
   private[this] val emptyStructFieldArray = Array.empty[StructField]
